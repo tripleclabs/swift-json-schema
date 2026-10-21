@@ -4,18 +4,36 @@ public struct Schema: ValidatableSchema {
   let schema: any ValidatableSchema
   let rawSchema: JSONValue
   let location: JSONPointer
-  let context: Context
+  let contextReference: ContextReference
   let documentURL: URL
 
+  var context: Context { contextReference.context }
+
+  /// Creates a schema that keeps `context` alive for as long as the schema exists.
   public init(
     rawSchema: JSONValue,
     location: JSONPointer = .init(),
     context: Context,
     baseURI: URL = URL(string: "https://swift-json-schema.invalid/in-memory")!
   ) throws(SchemaIssue) {
+    try self.init(
+      rawSchema: rawSchema,
+      location: location,
+      contextReference: ContextReference(retaining: context),
+      baseURI: baseURI
+    )
+  }
+
+  init(
+    rawSchema: JSONValue,
+    location: JSONPointer = .init(),
+    contextReference: ContextReference,
+    baseURI: URL = URL(string: "https://swift-json-schema.invalid/in-memory")!
+  ) throws(SchemaIssue) {
+    let context = contextReference.context
     self.rawSchema = rawSchema
     self.location = location
-    self.context = context
+    self.contextReference = contextReference
 
     let documentURL = baseURI.withoutFragment ?? baseURI
     self.documentURL = documentURL
@@ -26,14 +44,14 @@ public struct Schema: ValidatableSchema {
       self.schema = BooleanSchema(
         schemaValue: boolValue,
         location: location,
-        context: context,
+        contextReference: contextReference,
         documentURL: documentURL
       )
     case .object(let schemaDict):
       self.schema = try ObjectSchema(
         schemaValue: Dictionary(uniqueKeysWithValues: schemaDict.map { ($0.key, $0.value) }),
         location: location,
-        context: context,
+        contextReference: contextReference,
         baseURI: baseURI,
         documentURL: documentURL
       )
@@ -80,13 +98,13 @@ public struct Schema: ValidatableSchema {
   init(
     schema: any ValidatableSchema,
     location: JSONPointer,
-    context: Context,
+    contextReference: ContextReference,
     documentURL: URL = URL(string: "https://swift-json-schema.invalid/in-memory")!
   ) {
     self.schema = schema
     self.rawSchema = schema.jsonValue
     self.location = location
-    self.context = context
+    self.contextReference = contextReference
     self.documentURL = documentURL
   }
 
@@ -147,8 +165,10 @@ public struct Schema: ValidatableSchema {
 package struct BooleanSchema: ValidatableSchema {
   let schemaValue: Bool
   let location: JSONPointer
-  let context: Context
+  let contextReference: ContextReference
   let documentURL: URL
+
+  var context: Context { contextReference.context }
 
   package init(
     schemaValue: Bool,
@@ -156,9 +176,23 @@ package struct BooleanSchema: ValidatableSchema {
     context: Context,
     documentURL: URL = URL(string: "https://swift-json-schema.invalid/in-memory")!
   ) {
+    self.init(
+      schemaValue: schemaValue,
+      location: location,
+      contextReference: ContextReference(retaining: context),
+      documentURL: documentURL
+    )
+  }
+
+  init(
+    schemaValue: Bool,
+    location: JSONPointer,
+    contextReference: ContextReference,
+    documentURL: URL = URL(string: "https://swift-json-schema.invalid/in-memory")!
+  ) {
     self.schemaValue = schemaValue
     self.location = location
-    self.context = context
+    self.contextReference = contextReference
     self.documentURL = documentURL
   }
 
@@ -184,14 +218,19 @@ package struct BooleanSchema: ValidatableSchema {
   }
 
   package func asSchema() -> Schema {
-    .init(schema: self, location: location, context: context, documentURL: documentURL)
+    .init(
+      schema: self,
+      location: location,
+      contextReference: contextReference,
+      documentURL: documentURL
+    )
   }
 }
 
 package struct ObjectSchema: ValidatableSchema {
   let schemaValue: [String: JSONValue]
   let location: JSONPointer
-  let context: Context
+  let contextReference: ContextReference
   let keywords: [any Keyword]
   let uri: URL?
   let documentURL: URL
@@ -200,6 +239,8 @@ package struct ObjectSchema: ValidatableSchema {
   private let selfAbsoluteLocation: URL?
   private let resourceURL: URL
 
+  var context: Context { contextReference.context }
+
   package init(
     schemaValue: [String: JSONValue],
     location: JSONPointer,
@@ -207,14 +248,30 @@ package struct ObjectSchema: ValidatableSchema {
     baseURI: URL = URL(string: "https://swift-json-schema.invalid/in-memory")!,
     documentURL: URL = URL(string: "https://swift-json-schema.invalid/in-memory")!
   ) throws(SchemaIssue) {
+    try self.init(
+      schemaValue: schemaValue,
+      location: location,
+      contextReference: ContextReference(retaining: context),
+      baseURI: baseURI,
+      documentURL: documentURL
+    )
+  }
+
+  init(
+    schemaValue: [String: JSONValue],
+    location: JSONPointer,
+    contextReference: ContextReference,
+    baseURI: URL = URL(string: "https://swift-json-schema.invalid/in-memory")!,
+    documentURL: URL = URL(string: "https://swift-json-schema.invalid/in-memory")!
+  ) throws(SchemaIssue) {
     self.schemaValue = schemaValue
     self.location = location
-    self.context = context
+    self.contextReference = contextReference
     self.documentURL = documentURL
     let (processedURI, keywords, dynamicAnchorInfo) = try Self.collectKeywords(
       from: schemaValue,
       location: location,
-      context: context,
+      contextReference: contextReference,
       baseURI: baseURI
     )
     self.keywords = keywords
@@ -227,7 +284,7 @@ package struct ObjectSchema: ValidatableSchema {
   private static func collectKeywords(
     from schemaValue: [String: JSONValue],
     location: JSONPointer,
-    context: Context,
+    contextReference: ContextReference,
     baseURI: URL
   ) throws(SchemaIssue) -> (
     processedURI: URL?,
@@ -241,6 +298,7 @@ package struct ObjectSchema: ValidatableSchema {
 
     var didProcessIdentiferKeyword = false
 
+    let context = contextReference.context
     var activeVocabularies = context.activeVocabularies
 
     // First pass: Process $schema to inherit metaschema vocabularies
@@ -248,7 +306,11 @@ package struct ObjectSchema: ValidatableSchema {
       let keywordLocation = location.appending(.key(Keywords.SchemaKeyword.name))
       let schemaKeyword = Keywords.SchemaKeyword(
         value: schemaKeywordValue,
-        context: .init(location: keywordLocation, context: context, uri: processedURI)
+        context: .init(
+          location: keywordLocation,
+          contextReference: contextReference,
+          uri: processedURI
+        )
       )
       keywords.append(schemaKeyword)
 
@@ -262,7 +324,11 @@ package struct ObjectSchema: ValidatableSchema {
       let keywordLocation = location.appending(.key(Keywords.Vocabulary.name))
       let vocabulary = Keywords.Vocabulary(
         value: vocabularyValue,
-        context: .init(location: keywordLocation, context: context, uri: processedURI)
+        context: .init(
+          location: keywordLocation,
+          contextReference: contextReference,
+          uri: processedURI
+        )
       )
       keywords.append(vocabulary)
 
@@ -290,7 +356,11 @@ package struct ObjectSchema: ValidatableSchema {
         let keywordLocation = location.appending(.key(keywordType.name))
         let keyword = keywordType.init(
           value: value,
-          context: .init(location: keywordLocation, context: context, uri: processedURI)
+          context: .init(
+            location: keywordLocation,
+            contextReference: contextReference,
+            uri: processedURI
+          )
         )
         keywords.append(keyword)
 
@@ -441,7 +511,12 @@ package struct ObjectSchema: ValidatableSchema {
   }
 
   package func asSchema() -> Schema {
-    .init(schema: self, location: location, context: context, documentURL: documentURL)
+    .init(
+      schema: self,
+      location: location,
+      contextReference: contextReference,
+      documentURL: documentURL
+    )
   }
 
   private func baseURIForAbsoluteLocation() -> URL {

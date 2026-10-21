@@ -252,7 +252,7 @@ extension Keywords {
           if let schema = try? Schema(
             rawSchema: rawSchema,
             location: updatedLocation,
-            context: context.context,
+            contextReference: context.contextReference,
             baseURI: context.uri
           ) {
             result[key] = schema
@@ -331,7 +331,7 @@ extension Keywords {
             let subschema = try? Schema(
               rawSchema: rawSchema,
               location: context.location.appending(.key(key)),
-              context: context.context,
+              contextReference: context.contextReference,
               baseURI: context.uri
             )
           else { return nil }
@@ -813,7 +813,7 @@ extension Keywords {
               let schema = try? Schema(
                 rawSchema: rawSchema,
                 location: context.location.appending(.key(key)),
-                context: context.context,
+                contextReference: context.contextReference,
                 baseURI: context.uri
               )
             else { return nil }
@@ -1060,7 +1060,7 @@ extension Array where Element == JSONValue {
       if let subschema = try? Schema(
         rawSchema: rawSchema,
         location: pointer,
-        context: context.context,
+        contextReference: context.contextReference,
         baseURI: context.uri
       ) {
         subschemas.append(subschema)
@@ -1075,13 +1075,13 @@ extension JSONValue {
     (try? Schema(
       rawSchema: self,
       location: context.location,
-      context: context.context,
+      contextReference: context.contextReference,
       baseURI: context.uri
     ))
       ?? BooleanSchema(
         schemaValue: true,
         location: context.location,
-        context: context.context,
+        contextReference: context.contextReference,
         documentURL: context.uri
       )
       .asSchema()

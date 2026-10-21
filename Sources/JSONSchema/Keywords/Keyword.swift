@@ -17,16 +17,22 @@ package protocol Keyword: Sendable {
 
 package struct KeywordContext {
   let location: JSONPointer
-  let context: Context
+  let contextReference: ContextReference
   let uri: URL
+
+  var context: Context { contextReference.context }
 
   package init(
     location: JSONPointer = .init(),
     context: Context = .init(dialect: .draft2020_12),
     uri: URL = .init(fileURLWithPath: #file)
   ) {
+    self.init(location: location, contextReference: ContextReference(retaining: context), uri: uri)
+  }
+
+  init(location: JSONPointer, contextReference: ContextReference, uri: URL) {
     self.location = location
-    self.context = context
+    self.contextReference = contextReference
     self.uri = uri
   }
 }
