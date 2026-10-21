@@ -19,7 +19,6 @@ extension Keywords {
     package let context: KeywordContext
     private let referenceURI: String
     private let resolver: ReferenceResolver
-    private let resolved = LockIsolated<Schema?>(nil)
 
     package init(value: JSONValue, context: KeywordContext) {
       self.value = value
@@ -42,13 +41,8 @@ extension Keywords {
     ) throws(ValidationIssue) {
       let schema: Schema
       do {
-        schema = try resolved.withLock { cached in
-          if let cached {
-            return cached
-          }
-          let fresh = try resolver.resolveSchema(for: referenceURI, isDynamic: false)
-          cached = fresh
-          return fresh
+        schema = try resolver.context.resolvedReference(referenceURI, baseURI: resolver.baseURI) {
+          try resolver.resolveSchema(for: referenceURI, isDynamic: false)
         }
       } catch let error as ValidationIssue {
         throw error
@@ -176,10 +170,21 @@ enum ReferenceResolverError: Error, CustomStringConvertible {
 }
 
 struct ReferenceResolver {
-  let context: Context
+  /// Every schema the resolver builds is owned by the context (its registry or
+  /// reference memo), so it only borrows the context; see ``ContextReference``.
+  private let contextReference: ContextReference
   let referenceURI: String
   let location: JSONPointer
   let baseURI: URL
+
+  var context: Context { contextReference.context }
+
+  init(context: Context, referenceURI: String, location: JSONPointer, baseURI: URL) {
+    self.contextReference = ContextReference(borrowing: context)
+    self.referenceURI = referenceURI
+    self.location = location
+    self.baseURI = baseURI
+  }
 
   func resolveSchema(for refURI: String, isDynamic: Bool) throws -> Schema {
     // Resolve the reference URI against the base URI
@@ -212,7 +217,7 @@ struct ReferenceResolver {
             return try Schema(
               rawSchema: raw,
               location: entry.pointer,
-              context: context,
+              contextReference: contextReference,
               baseURI: entry.baseURI
             )
           }
@@ -283,7 +288,7 @@ struct ReferenceResolver {
     let schema = try Schema(
       rawSchema: value,
       location: identifierLocation.pointer,
-      context: context,
+      contextReference: contextReference,
       baseURI: identifierLocation.document
     )
     context.cacheSchema(schema, at: referenceURL.absoluteString)
@@ -297,7 +302,7 @@ struct ReferenceResolver {
     let schema = try Schema(
       rawSchema: rawSchema,
       location: .init(),
-      context: context,
+      contextReference: contextReference,
       baseURI: referenceURL
     )
     let uri = (schema.schema as? ObjectSchema)?.uri?.absoluteString ?? referenceURL.absoluteString
@@ -318,7 +323,7 @@ struct ReferenceResolver {
     let schema = try Schema(
       rawSchema: value,
       location: identifierLocation.pointer,
-      context: context,
+      contextReference: contextReference,
       baseURI: identifierLocation.document
     )
     context.cacheSchema(schema, at: referenceURL.absoluteString)
@@ -365,7 +370,7 @@ struct ReferenceResolver {
     return try Schema(
       rawSchema: subRawSchema,
       location: pointer,
-      context: context,
+      contextReference: contextReference,
       baseURI: referenceURL
     )
   }

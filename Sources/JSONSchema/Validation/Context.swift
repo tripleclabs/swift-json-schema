@@ -123,6 +123,7 @@ public final class Context: Sendable {
     var dynamicAnchors: [URL: [String: (pointer: JSONPointer, baseURI: URL)]] = [:]
     var schemas: [String: Schema] = [:]
     var anchors: [URL: JSONPointer] = [:]
+    var resolvedReferences: [String: Schema] = [:]
   }
 
   private let registry = LockIsolated(Registry())
@@ -169,6 +170,29 @@ public final class Context: Sendable {
     registry.withLock { $0.schemas[uri] = schema }
   }
 
+  /// Returns the schema a static `$ref` resolves to, resolving it on first use.
+  ///
+  /// Resolution depends only on the reference and its base URI, so the result is
+  /// memoized here, owned by the context, rather than by the referencing keyword:
+  /// a keyword-owned memo forms a cycle whenever a schema references itself
+  /// (`"$ref": "#"`) or a cached schema that contains the reference.
+  /// Resolution runs outside the lock; a concurrent duplicate is equivalent and the
+  /// first stored result wins.
+  func resolvedReference(
+    _ referenceURI: String,
+    baseURI: URL,
+    resolve: () throws -> Schema
+  ) throws -> Schema {
+    let key = baseURI.absoluteString + "\u{0}" + referenceURI
+    if let cached = registry.withLock({ $0.resolvedReferences[key] }) { return cached }
+    let fresh = try resolve()
+    return registry.withLock {
+      if let existing = $0.resolvedReferences[key] { return existing }
+      $0.resolvedReferences[key] = fresh
+      return fresh
+    }
+  }
+
   public init(
     dialect: Dialect,
     remoteSchema: [String: JSONValue] = [:],
@@ -197,4 +221,32 @@ public final class Context: Sendable {
     return Set(entries.keys) == dialect.supportedVocabularies
       && entries.values.allSatisfy { $0.boolean != nil }
   }
+}
+
+/// How a node of a schema tree refers to the ``Context`` it was built in.
+///
+/// The context owns the schemas it caches for reference resolution, so those
+/// schemas must not own the context back. A schema built by a caller (the root
+/// of a tree) *retains* its context and keeps it alive; every schema the
+/// context builds for itself while resolving `$ref`/`$dynamicRef` only
+/// *borrows* it. A borrowed schema is reachable only through the context's
+/// registry or during an evaluation started from a retaining schema, so the
+/// context always outlives it.
+package struct ContextReference: Sendable {
+  private let owner: Context?
+  private unowned let borrowed: Context
+
+  /// A reference that keeps `context` alive.
+  init(retaining context: Context) {
+    self.owner = context
+    self.borrowed = context
+  }
+
+  /// A reference that does not keep `context` alive; the context must outlive it.
+  init(borrowing context: Context) {
+    self.owner = nil
+    self.borrowed = context
+  }
+
+  var context: Context { borrowed }
 }

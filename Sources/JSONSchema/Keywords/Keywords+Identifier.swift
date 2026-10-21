@@ -64,7 +64,7 @@ extension Keywords {
         _ = try? Schema(
           rawSchema: value,
           location: subschemaLocation,
-          context: context.context,
+          contextReference: context.contextReference,
           baseURI: context.uri
         )
       }
